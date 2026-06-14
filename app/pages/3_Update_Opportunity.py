@@ -1,97 +1,57 @@
-from __future__ import annotations
-
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import streamlit as st
+from auth import check_login, require_admin
+from queries import get_all_opportunities, get_opportunity_by_id, update_opportunity
 
-import auth
-from db import get_opportunities, update_opportunity
-from utils import CURRENCY_OPTIONS, EXPERIENCE_LEVEL_OPTIONS, STATUS_OPTIONS, WORK_MODE_OPTIONS, render_section_title, validate_opportunity_payload
+check_login()
+require_admin()
 
+st.header('Update Opportunity')
 
-st.set_page_config(page_title="Update Opportunity", page_icon="✏️", layout="wide")
+df = get_all_opportunities()
+options = df.apply(lambda r: f"{r['opportunity_id']} - {r['company_name']} | {r['job_title']}", axis=1).tolist()
+id_map = {opt.split(' - ')[0]: opt for opt in options}
 
-
-def main() -> None:
-    auth.init_session_state()
-    auth.render_login_panel()
-    st.title("Update Opportunity")
-    render_section_title("Modify an existing record", "Admin users can update status, salary, skills, deadline, and work mode.")
-
-    if not auth.require_admin():
-        return
-
-    try:
-        records = get_opportunities(limit=500, sort_by="created_at", sort_order="DESC")
-    except Exception as exc:
-        st.error(f"Unable to fetch opportunities: {exc}")
-        return
-
-    if records.empty:
-        st.info("No records available for updates.")
-        return
-
-    selection = st.selectbox(
-        "Choose an opportunity",
-        records["opportunity_id"].tolist(),
-        format_func=lambda opportunity_id: f"#{opportunity_id} - {records.loc[records['opportunity_id'] == opportunity_id, 'company_name'].iloc[0]} | {records.loc[records['opportunity_id'] == opportunity_id, 'job_title'].iloc[0]}",
-    )
-    current = records.loc[records["opportunity_id"] == selection].iloc[0]
-
-    st.dataframe(current.to_frame().T, use_container_width=True, hide_index=True)
-
-    with st.form("update_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            status = st.selectbox("Status", STATUS_OPTIONS, index=STATUS_OPTIONS.index(current["status"]) if current["status"] in STATUS_OPTIONS else 0)
-            work_mode = st.selectbox("Work Mode", WORK_MODE_OPTIONS, index=WORK_MODE_OPTIONS.index(current["work_mode"]) if current["work_mode"] in WORK_MODE_OPTIONS else 0)
-            experience_level = st.selectbox("Experience Level", EXPERIENCE_LEVEL_OPTIONS, index=EXPERIENCE_LEVEL_OPTIONS.index(current["experience_level"]) if current["experience_level"] in EXPERIENCE_LEVEL_OPTIONS else 0)
-            source_link = st.text_input("Source Link", value=str(current["source_link"]))
-        with col2:
-            salary_min = st.number_input("Salary Min", min_value=0.0, value=float(current["salary_min"]), step=100.0)
-            salary_max = st.number_input("Salary Max", min_value=0.0, value=float(current["salary_max"]), step=100.0)
-            required_skills = st.text_area("Required Skills", value=str(current["required_skills"]))
-            application_deadline = st.date_input("Application Deadline")
-        submitted = st.form_submit_button("Update Record", use_container_width=True)
-
-    if submitted:
-        payload = {
-            "company_name": current["company_name"],
-            "job_title": current["job_title"],
-            "category": current["category"],
-            "city": current["city"],
-            "country": current["country"],
-            "work_mode": work_mode,
-            "required_skills": required_skills,
-            "salary_min": salary_min,
-            "salary_max": salary_max,
-            "currency": current["currency"],
-            "experience_level": experience_level,
-            "application_deadline": application_deadline,
-            "status": status,
-            "source_link": source_link,
-        }
-        cleaned, errors = validate_opportunity_payload(payload)
-        if errors:
-            st.error("\n".join(errors))
-            return
-        updates = {
-            "work_mode": cleaned["work_mode"],
-            "required_skills": cleaned["required_skills"],
-            "salary_min": cleaned["salary_min"],
-            "salary_max": cleaned["salary_max"],
-            "experience_level": cleaned["experience_level"],
-            "application_deadline": cleaned["application_deadline"],
-            "status": cleaned["status"],
-            "source_link": cleaned["source_link"],
-        }
-        try:
-            updated = update_opportunity(int(selection), updates)
-            if updated:
-                st.success("Opportunity updated successfully.")
-            else:
-                st.warning("No changes were applied.")
-        except Exception as exc:
-            st.error(f"Update failed: {exc}")
+choice = st.selectbox('Select Opportunity', options=['']+options)
+if choice:
+    opp_id = int(choice.split(' - ')[0])
+    record = get_opportunity_by_id(opp_id)
+    if record:
+        with st.form('update_form'):
+            company_name = st.text_input('Company Name', value=record.get('company_name',''))
+            job_title = st.text_input('Job Title', value=record.get('job_title',''))
+            category = st.selectbox('Category', ['Data Science','Artificial Intelligence','Web Development','Cyber Security','Other'], index=0)
+            city = st.text_input('City', value=record.get('city',''))
+            country = st.text_input('Country', value=record.get('country','Pakistan'))
+            work_mode = st.selectbox('Work Mode', ['Remote','Onsite','Hybrid'], index=0)
+            required_skills = st.text_area('Required Skills', value=record.get('required_skills',''))
+            salary_min = st.number_input('Salary Min', min_value=0, value=int(record.get('salary_min') or 0))
+            salary_max = st.number_input('Salary Max', min_value=0, value=int(record.get('salary_max') or 0))
+            currency = st.selectbox('Currency', ['PKR','USD'], index=0)
+            experience_level = st.selectbox('Experience Level', ['Fresh','Junior','Mid-Level','Senior'], index=0)
+            application_deadline = st.date_input('Application Deadline', value=record.get('application_deadline'))
+            status = st.selectbox('Status', ['Open','Closed','Expired','Shortlisted'], index=0)
+            source_link = st.text_input('Source Link', value=record.get('source_link',''))
+            submitted = st.form_submit_button('Update')
+            if submitted:
+                data = {
+                    'company_name': company_name,
+                    'job_title': job_title,
+                    'category': category,
+                    'city': city,
+                    'country': country,
+                    'work_mode': work_mode,
+                    'required_skills': required_skills,
+                    'salary_min': salary_min if salary_min>0 else None,
+                    'salary_max': salary_max if salary_max>0 else None,
+                    'currency': currency,
+                    'experience_level': experience_level,
+                    'application_deadline': application_deadline.strftime('%Y-%m-%d') if application_deadline else None,
+                    'status': status,
+                    'source_link': source_link,
+                }
+                update_opportunity(opp_id, data)
+                st.success('Opportunity updated')
 
 
-if __name__ == "__main__":
-    main()
