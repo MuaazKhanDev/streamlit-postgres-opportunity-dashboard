@@ -1,0 +1,25 @@
+cat > health_check.py << 'EOF'
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+import streamlit as st
+from auth import check_login
+from queries import get_db_stats
+from db import get_engine
+import pandas as pd
+
+check_login()
+
+st.header('Database Health Check')
+
+try:
+    engine = get_engine()
+    conn = engine.connect()
+    st.success('✅ Database connection successful')
+    
+    stats = get_db_stats()
+    st.subheader('Database Statistics')
+    st.json(stats)
+    
+except Exception as e:
+    st.error(f'❌ Connection failed: {e}')
+EOF

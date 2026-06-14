@@ -5,89 +5,205 @@ import plotly.express as px
 import streamlit as st
 
 import auth
-from db import count_opportunities, get_opportunities
-from utils import deadline_bucket_frame, render_section_title, top_skills_frame
+from db import get_opportunities
+from utils import (
+    deadline_bucket_frame,
+    render_section_title,
+    top_skills_frame,
+)
+
+st.set_page_config(
+    page_title="Analytics Dashboard",
+    page_icon="📈",
+    layout="wide",
+)
 
 
-st.set_page_config(page_title="Analytics Dashboard", page_icon="📈", layout="wide")
+def calculate_statistics(data: pd.DataFrame) -> dict:
+    if data.empty:
+        return {
+            "total": 0,
+            "open": 0,
+            "closed": 0,
+            "remote": 0,
+            "hybrid": 0,
+            "companies": 0,
+        }
+
+    status_series = data["status"].astype(str).str.lower()
+    mode_series = data["work_mode"].astype(str).str.lower()
+
+    return {
+        "total": len(data),
+        "open": int((status_series == "open").sum()),
+        "closed": int(
+            status_series.isin(
+                ["closed", "expired", "archived"]
+            ).sum()
+        ),
+        "remote": int((mode_series == "remote").sum()),
+        "hybrid": int((mode_series == "hybrid").sum()),
+        "companies": int(data["company_name"].nunique()),
+    }
 
 
-def metric_card(label: str, value: object) -> None:
-    st.metric(label, value)
+def prepare_chart_data(data: pd.DataFrame):
+    categories = (
+        data["category"]
+        .value_counts()
+        .reset_index(name="count")
+        .rename(columns={"index": "category"})
+    )
+
+    work_modes = (
+        data["work_mode"]
+        .value_counts()
+        .reset_index(name="count")
+        .rename(columns={"index": "work_mode"})
+    )
+
+    statuses = (
+        data["status"]
+        .value_counts()
+        .reset_index(name="count")
+        .rename(columns={"index": "status"})
+    )
+
+    salary_data = data.copy()
+    salary_data["average_salary"] = (
+        salary_data["salary_min"].astype(float)
+        + salary_data["salary_max"].astype(float)
+    ) / 2
+
+    return (
+        categories,
+        work_modes,
+        statuses,
+        salary_data,
+        top_skills_frame(data),
+        deadline_bucket_frame(data),
+    )
 
 
-def main() -> None:
+def display_kpis(metrics: dict) -> None:
+    columns = st.columns(6)
+
+    columns[0].metric("Total Opportunities", metrics["total"])
+    columns[1].metric("Open Jobs", metrics["open"])
+    columns[2].metric("Closed Jobs", metrics["closed"])
+    columns[3].metric("Remote Jobs", metrics["remote"])
+    columns[4].metric("Hybrid Jobs", metrics["hybrid"])
+    columns[5].metric("Total Companies", metrics["companies"])
+
+
+def build_dashboard() -> None:
     auth.init_session_state()
     auth.render_login_panel()
+
     st.title("Analytics Dashboard")
-    render_section_title("Operational insights", "A quick snapshot of the opportunity dataset.")
+    render_section_title(
+        "Operational Insights",
+        "A quick snapshot of the opportunity dataset.",
+    )
 
     try:
-        df = get_opportunities(limit=5000, sort_by="created_at", sort_order="DESC")
-    except Exception as exc:
-        st.error(f"Unable to load analytics data: {exc}")
+        opportunities = get_opportunities(
+            limit=5000,
+            sort_by="created_at",
+            sort_order="DESC",
+        )
+    except Exception as err:
+        st.error(f"Unable to load analytics data: {err}")
         return
 
-    total = len(df)
-    open_jobs = int((df["status"].astype(str).str.lower() == "open").sum()) if total else 0
-    closed_jobs = int(df["status"].astype(str).str.lower().isin(["closed", "expired", "archived"]).sum()) if total else 0
-    remote_jobs = int((df["work_mode"].astype(str).str.lower() == "remote").sum()) if total else 0
-    hybrid_jobs = int((df["work_mode"].astype(str).str.lower() == "hybrid").sum()) if total else 0
-    total_companies = int(df["company_name"].nunique()) if total else 0
+    stats = calculate_statistics(opportunities)
+    display_kpis(stats)
 
-    kpi_cols = st.columns(6)
-    kpi_cols[0].metric("Total Opportunities", total)
-    kpi_cols[1].metric("Open Jobs", open_jobs)
-    kpi_cols[2].metric("Closed Jobs", closed_jobs)
-    kpi_cols[3].metric("Remote Jobs", remote_jobs)
-    kpi_cols[4].metric("Hybrid Jobs", hybrid_jobs)
-    kpi_cols[5].metric("Total Companies", total_companies)
-
-    if total == 0:
-        st.info("No data available for analytics.")
+    if opportunities.empty:
+        st.info("No analytics data found.")
         return
 
-    category_counts = df["category"].value_counts().reset_index()
-    category_counts.columns = ["category", "count"]
-    work_mode_counts = df["work_mode"].value_counts().reset_index()
-    work_mode_counts.columns = ["work_mode", "count"]
-    status_counts = df["status"].value_counts().reset_index()
-    status_counts.columns = ["status", "count"]
-    salary_df = df.copy()
-    salary_df["average_salary"] = (salary_df["salary_min"].astype(float) + salary_df["salary_max"].astype(float)) / 2
-    skills_df = top_skills_frame(df)
-    deadline_df = deadline_bucket_frame(df)
+    (
+        category_df,
+        workmode_df,
+        status_df,
+        salary_df,
+        skills_df,
+        deadline_df,
+    ) = prepare_chart_data(opportunities)
 
-    chart1, chart2 = st.columns(2)
-    with chart1:
-        fig = px.bar(category_counts, x="category", y="count", title="Category Distribution", color="category")
-        st.plotly_chart(fig, use_container_width=True)
-    with chart2:
-        fig = px.pie(work_mode_counts, names="work_mode", values="count", title="Work Mode Distribution", hole=0.35)
-        st.plotly_chart(fig, use_container_width=True)
+    left_col, right_col = st.columns(2)
 
-    chart3, chart4 = st.columns(2)
-    with chart3:
-        fig = px.bar(status_counts, x="status", y="count", title="Status Distribution", color="status")
-        st.plotly_chart(fig, use_container_width=True)
-    with chart4:
-        fig = px.box(salary_df, y="average_salary", x="category", title="Salary Analysis", points="all")
-        st.plotly_chart(fig, use_container_width=True)
+    with left_col:
+        category_chart = px.bar(
+            category_df,
+            x="category",
+            y="count",
+            color="category",
+            title="Category Distribution",
+        )
+        st.plotly_chart(category_chart, use_container_width=True)
 
-    chart5, chart6 = st.columns(2)
-    with chart5:
-        if not skills_df.empty:
-            fig = px.bar(skills_df, x="skill", y="count", title="Top Skills Analysis", color="count")
-            st.plotly_chart(fig, use_container_width=True)
-        else:
+    with right_col:
+        workmode_chart = px.pie(
+            workmode_df,
+            names="work_mode",
+            values="count",
+            hole=0.35,
+            title="Work Mode Distribution",
+        )
+        st.plotly_chart(workmode_chart, use_container_width=True)
+
+    left_col, right_col = st.columns(2)
+
+    with left_col:
+        status_chart = px.bar(
+            status_df,
+            x="status",
+            y="count",
+            color="status",
+            title="Status Distribution",
+        )
+        st.plotly_chart(status_chart, use_container_width=True)
+
+    with right_col:
+        salary_chart = px.box(
+            salary_df,
+            x="category",
+            y="average_salary",
+            title="Salary Analysis",
+            points="all",
+        )
+        st.plotly_chart(salary_chart, use_container_width=True)
+
+    left_col, right_col = st.columns(2)
+
+    with left_col:
+        if skills_df.empty:
             st.info("No skills data available.")
-    with chart6:
-        if not deadline_df.empty:
-            fig = px.line(deadline_df, x="deadline", y="count", title="Deadline Trends", markers=True)
-            st.plotly_chart(fig, use_container_width=True)
         else:
+            skills_chart = px.bar(
+                skills_df,
+                x="skill",
+                y="count",
+                color="count",
+                title="Top Skills Analysis",
+            )
+            st.plotly_chart(skills_chart, use_container_width=True)
+
+    with right_col:
+        if deadline_df.empty:
             st.info("No deadline trend data available.")
+        else:
+            deadline_chart = px.line(
+                deadline_df,
+                x="deadline",
+                y="count",
+                markers=True,
+                title="Deadline Trends",
+            )
+            st.plotly_chart(deadline_chart, use_container_width=True)
 
 
 if __name__ == "__main__":
-    main()
+    build_dashboard()
