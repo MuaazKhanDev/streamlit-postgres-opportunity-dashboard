@@ -14,12 +14,16 @@ st.header('Database Health Check')
 try:
     engine = get_engine()
     conn = engine.connect()
-    st.success('✅ Database connection successful')
-    
+    st.success('Connection successful')
     stats = get_db_stats()
-    st.subheader('Database Statistics')
+    st.subheader('Statistics')
     st.json(stats)
-    
+    if stats.get('latest_record'):
+        st.subheader('Latest Record')
+        st.dataframe(pd.DataFrame([stats['latest_record']]))
+    if st.button('Run Test Query'):
+        r = conn.execute('SELECT COUNT(*)').fetchall()
+        st.write(r[0][0])
 except Exception as e:
-    st.error(f'❌ Connection failed: {e}')
+    st.error(f'Connection failed: {e}')
 EOF
